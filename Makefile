@@ -1,4 +1,4 @@
-SHELL := /bin/zsh
+SHELL := $(shell which zsh)
 
 PREFIX     ?= $(HOME)/.local
 BIN_DIR     = $(PREFIX)/bin
