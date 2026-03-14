@@ -1,0 +1,343 @@
+#!/usr/bin/env zsh
+
+# envs - Environment Variable Manager
+# Manages persistent environment variables through organized group files
+
+SCRIPT_DIR="${0:A:h}"
+source "$SCRIPT_DIR/../common"
+
+# Configuration
+ENVS_DIR="$HOME/.envs"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Migration check
+# ─────────────────────────────────────────────────────────────────────────────
+
+if [[ -f "$ENVS_DIR" && ! -d "$ENVS_DIR" ]]; then
+    error "$ENVS_DIR is a file from an older version. To migrate:\n  mkdir -p ${ENVS_DIR}.new && mv $ENVS_DIR ${ENVS_DIR}.new/default && mv ${ENVS_DIR}.new $ENVS_DIR"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Helper functions
+# ─────────────────────────────────────────────────────────────────────────────
+
+usage() {
+    echo "Usage: envs <command> [options]"
+    echo ""
+    echo "Commands:"
+    echo "  read                  Output export statements (use with eval)"
+    echo "  add <name> <value>    Add or update a variable in a group"
+    echo "  remove [name]         Remove a variable"
+    echo "  clean                 Remove variables not set in current env"
+    echo "  list [--all]          Show managed variables (--all for all)"
+    echo "  find <pattern>        Find variables matching pattern"
+    echo "  dir                   Show config directory"
+    echo ""
+    echo "Add to .zshrc:"
+    echo "  eval \"\$(envs read)\""
+    echo ""
+    echo "Examples:"
+    echo "  envs add API_KEY sk-1234567890"
+    echo "  envs remove API_KEY"
+    echo "  envs list"
+}
+
+# Mask sensitive values
+mask_value() {
+    local name="$1" value="$2"
+    if [[ "$name" =~ (KEY|SECRET|TOKEN|PASS|CRED|AUTH) ]]; then
+        if [[ ${#value} -gt 8 ]]; then
+            echo "${value:0:4}...${value: -4}"
+        else
+            echo "****"
+        fi
+    else
+        echo "$value"
+    fi
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Commands
+# ─────────────────────────────────────────────────────────────────────────────
+
+cmd_read() {
+    /bin/mkdir -p "$ENVS_DIR"
+    for group in "$ENVS_DIR"/*(N); do
+        [[ ! -f "$group" ]] && continue
+        while IFS='=' read -r name value; do
+            [[ -z "$name" || "$name" == \#* ]] && continue
+            echo "export $name=${(q)value}"
+        done < "$group"
+    done
+}
+
+cmd_add() {
+    local name="$1"
+    local value="$2"
+
+    if [[ -z "$name" || -z "$value" ]]; then
+        error "Usage: envs add <name> <value>"
+    fi
+
+    # Validate name (alphanumeric and underscore only)
+    if [[ ! "$name" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+        error "Invalid variable name: $name"
+    fi
+
+    # Reject values with newlines (would corrupt file format)
+    if [[ "$value" == *$'\n'* ]]; then
+        error "Value cannot contain newlines"
+    fi
+
+    /bin/mkdir -p "$ENVS_DIR"
+
+    # Remove existing entry from any group
+    for group in "$ENVS_DIR"/*(N); do
+        [[ ! -f "$group" ]] && continue
+        if /usr/bin/grep -q "^${name}=" "$group" 2>/dev/null; then
+            local temp=$(/usr/bin/mktemp)
+            /usr/bin/grep -v "^${name}=" "$group" > "$temp"
+            /bin/mv "$temp" "$group"
+        fi
+    done
+
+    # Select group
+    echo "Select a group for '$name':"
+    local groups=("$ENVS_DIR"/*(N))
+    local group_names=()
+    for g in "${groups[@]}"; do
+        [[ -f "$g" ]] && group_names+=("${g:t}")
+    done
+    group_names+=("Create new group")
+
+    menu "${group_names[@]}"
+    local idx=$(($? + 1))
+    echo ""
+
+    local group
+    if [[ $idx -eq ${#group_names[@]} ]]; then
+        printf "Group name: "
+        read -r new_name
+        if [[ -z "$new_name" ]]; then
+            error "Group name cannot be empty"
+        fi
+        group="$ENVS_DIR/$new_name"
+        touch "$group"
+        echo "${GREEN}Created group '$new_name'${NC}"
+    else
+        group="${groups[$idx]}"
+    fi
+
+    echo "${name}=${value}" >> "$group"
+    success "Set $name in ${group:t}"
+}
+
+cmd_remove() {
+    /bin/mkdir -p "$ENVS_DIR"
+
+    local groups=("$ENVS_DIR"/*)
+    if [[ ${#groups[@]} -eq 0 ]] || [[ ! -e "${groups[1]}" ]]; then
+        error "No variable groups found."
+    fi
+
+    # If a name was provided, find and remove it
+    if [[ -n "$1" ]]; then
+        local name="$1"
+        for group in "${groups[@]}"; do
+            if /usr/bin/grep -q "^${name}=" "$group" 2>/dev/null; then
+                local temp=$(/usr/bin/mktemp)
+                /usr/bin/grep -v "^${name}=" "$group" > "$temp"
+                /bin/mv "$temp" "$group"
+                success "Removed $name from ${group:t}"
+                return
+            fi
+        done
+        error "Variable '$name' not found in any group."
+    fi
+
+    # Interactive mode: select group, then select variable
+    echo "Select a group:"
+    menu "${groups[@]:t}"
+    local group="${groups[$(($? + 1))]}"
+    echo ""
+
+    if [[ ! -s "$group" ]]; then
+        error "Group '${group:t}' is empty."
+    fi
+
+    local names=()
+    while IFS='=' read -r name value; do
+        [[ -z "$name" || "$name" == \#* ]] && continue
+        names+=("$name")
+    done < "$group"
+
+    if [[ ${#names[@]} -eq 0 ]]; then
+        error "Group '${group:t}' has no variables."
+    fi
+
+    echo "Select a variable to remove from '${group:t}':"
+    menu "${names[@]}"
+    local idx=$(($? + 1))
+    local selected="${names[$idx]}"
+    echo ""
+
+    local temp=$(/usr/bin/mktemp)
+    /usr/bin/grep -v "^${selected}=" "$group" > "$temp"
+    /bin/mv "$temp" "$group"
+    success "Removed $selected from ${group:t}"
+}
+
+cmd_list() {
+    local show_all=false
+    [[ "$1" == "--all" ]] && show_all=true
+
+    typeset -A vars managed var_groups
+
+    # Load managed vars from group files
+    for group in "$ENVS_DIR"/*(N); do
+        [[ ! -f "$group" ]] && continue
+        while IFS='=' read -r name value; do
+            [[ -z "$name" || "$name" == \#* ]] && continue
+            vars[$name]="$value"
+            managed[$name]=1
+            var_groups[$name]="${group:t}"
+        done < "$group"
+    done
+
+    # Load env vars if --all
+    if $show_all; then
+        while IFS='=' read -r name value; do
+            [[ -z "$name" ]] && continue
+            [[ -z "${vars[$name]}" ]] && vars[$name]="$value"
+        done < <(env)
+    fi
+
+    if [[ ${#vars} -eq 0 ]]; then
+        echo "No managed variables."
+        return
+    fi
+
+    for name in ${(ko)vars}; do
+        value="$(mask_value "$name" "${vars[$name]}")"
+
+        if [[ -n "${managed[$name]}" ]]; then
+            icon="${GREEN}󱋻${NC}"
+            suffix=" ${GREY}(${var_groups[$name]})${NC}"
+        else
+            icon="${GREY}󰼈${NC}"
+            suffix=""
+        fi
+
+        echo -e "${icon} ${CYAN}$name${NC}=${value}${suffix}"
+    done
+}
+
+cmd_find() {
+    if [[ $# -eq 0 ]]; then
+        error "Usage: envs find <pattern>"
+    fi
+
+    local pattern="$1"
+    local results=()
+
+    while IFS='=' read -r name value; do
+        [[ -z "$name" ]] && continue
+        if [[ "$name" == $~pattern ]]; then
+            results+=("$name=$value")
+        fi
+    done < <(env)
+
+    if [[ ${#results[@]} -eq 0 ]]; then
+        echo "${RED}Error:${NC} No match for '$pattern'" >&2
+        return 1
+    fi
+
+    printf '%s\n' "${results[@]}"
+}
+
+cmd_clean() {
+    /bin/mkdir -p "$ENVS_DIR"
+
+    local groups=("$ENVS_DIR"/*)
+    if [[ ${#groups[@]} -eq 0 ]] || [[ ! -e "${groups[1]}" ]]; then
+        echo "No variable groups found."
+        return
+    fi
+
+    local removed=0
+    for group in "${groups[@]}"; do
+        [[ ! -f "$group" ]] && continue
+
+        local temp=$(/usr/bin/mktemp)
+        local group_removed=0
+
+        while IFS='=' read -r name value; do
+            if [[ -z "$name" || "$name" == \#* ]]; then
+                continue
+            elif [[ -n "${(P)name}" ]]; then
+                echo "${name}=${value}" >> "$temp"
+            else
+                echo "${RED}✕${NC} $name ${GREY}(${group:t})${NC}"
+                ((group_removed++))
+                ((removed++))
+            fi
+        done < "$group"
+
+        if [[ $group_removed -gt 0 ]]; then
+            /bin/mv "$temp" "$group"
+        else
+            /bin/rm "$temp"
+        fi
+    done
+
+    if [[ $removed -eq 0 ]]; then
+        echo "${YELLOW}All managed variables are set.${NC}"
+    else
+        echo ""
+        success "Removed $removed unset variable(s)."
+    fi
+}
+
+cmd_dir() {
+    echo "$ENVS_DIR"
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Main
+# ─────────────────────────────────────────────────────────────────────────────
+
+case "${1:-}" in
+    read)
+        cmd_read
+        ;;
+    add)
+        shift
+        cmd_add "$@"
+        ;;
+    remove)
+        shift
+        cmd_remove "$@"
+        ;;
+    clean)
+        cmd_clean
+        ;;
+    list)
+        cmd_list "$2"
+        ;;
+    find)
+        shift
+        cmd_find "$@"
+        ;;
+    dir)
+        cmd_dir
+        ;;
+    help|--help|-h)
+        usage
+        ;;
+    "")
+        usage
+        ;;
+    *)
+        error "Unknown command: $1. Run 'envs help' for usage."
+        ;;
+esac

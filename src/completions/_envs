@@ -1,0 +1,39 @@
+#compdef envs
+
+_envs() {
+    local -a commands
+    commands=(
+        'read:Load all variables into environment'
+        'add:Add or update a variable'
+        'remove:Remove a variable'
+        'clean:Remove variables not set in current env'
+        'list:Show all managed variables'
+        'dir:Show config directory'
+        'help:Show usage'
+    )
+
+    local -a varnames
+    local envs_dir="$HOME/.envs"
+
+    _arguments -C \
+        '1:command:->command' \
+        '*::arg:->args'
+
+    case $state in
+        command)
+            _describe -t commands 'envs command' commands
+            ;;
+        args)
+            case $words[1] in
+                remove)
+                    if [[ -d "$envs_dir" ]]; then
+                        varnames=(${(f)"$(cut -d= -f1 "$envs_dir"/*(N) 2>/dev/null)"})
+                        _describe -t varnames 'variable name' varnames
+                    fi
+                    ;;
+            esac
+            ;;
+    esac
+}
+
+_envs "$@"
