@@ -75,7 +75,7 @@ cmd_add() {
     local name="$1"
     local value="$2"
 
-    if [[ -z "$name" || -z "$value" ]]; then
+    if [[ -z "$name" ]] || [[ $# -lt 2 ]]; then
         error "Usage: envs add <name> <value>"
     fi
 
