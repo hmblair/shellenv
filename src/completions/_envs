@@ -8,6 +8,7 @@ _envs() {
         'remove:Remove a variable'
         'clean:Remove variables not set in current env'
         'list:Show all managed variables'
+        'groups:List available groups'
         'dir:Show config directory'
         'help:Show usage'
     )
@@ -25,6 +26,15 @@ _envs() {
             ;;
         args)
             case $words[1] in
+                add)
+                    if [[ "$words[2]" == "--group" && $CURRENT -eq 3 ]]; then
+                        local -a groups
+                        [[ -d "$envs_dir" ]] && groups=(${(f)"$(ls "$envs_dir" 2>/dev/null)"})
+                        _describe -t groups 'group' groups
+                    else
+                        _arguments '--group[Specify group]:group:'
+                    fi
+                    ;;
                 remove)
                     if [[ -d "$envs_dir" ]]; then
                         varnames=(${(f)"$(cut -d= -f1 "$envs_dir"/*(N) 2>/dev/null)"})

@@ -8,6 +8,7 @@ _path() {
         'remove:Remove a path from a group'
         'clean:Remove nonexistent paths from groups'
         'list:Show all paths in current PATH'
+        'groups:List available groups'
         'dir:Show path config directory'
         'help:Show usage'
     )
@@ -23,7 +24,14 @@ _path() {
         args)
             case $words[1] in
                 add)
-                    _files -/
+                    if [[ "$words[2]" == "--group" && $CURRENT -eq 3 ]]; then
+                        local -a groups
+                        local path_dir="$HOME/.paths"
+                        [[ -d "$path_dir" ]] && groups=(${(f)"$(ls "$path_dir" 2>/dev/null)"})
+                        _describe -t groups 'group' groups
+                    else
+                        _arguments '--group[Specify group]:group:' '*:path:_files -/'
+                    fi
                     ;;
                 remove)
                     _files -/

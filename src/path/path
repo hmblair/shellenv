@@ -23,12 +23,14 @@ usage() {
     echo "  clean                 Remove nonexistent paths from groups"
     echo "  list                  Show all paths in current PATH"
     echo "  find <pattern>        Find executables matching pattern"
+    echo "  groups                List available groups"
     echo "  dir                   Show path config directory"
     echo ""
     echo "Add to .zshrc:"
     echo "  eval \"\$(path read)\""
     echo ""
     echo "Examples:"
+    echo "  path add --group tools ~/bin"
     echo "  path add ~/bin"
     echo "  path remove"
     echo "  path list"
@@ -75,7 +77,28 @@ cmd_read() {
     echo "export PATH=\"$(file_to_path "$PATH_DIR"/*(N)):\$PATH\""
 }
 
+cmd_groups() {
+    /bin/mkdir -p "$PATH_DIR"
+    local groups=("$PATH_DIR"/*(N))
+    if [[ ${#groups[@]} -eq 0 ]]; then
+        echo "No groups found."
+        return
+    fi
+    for g in "${groups[@]}"; do
+        [[ -f "$g" ]] && echo "${g:t}"
+    done
+}
+
 cmd_add() {
+    local explicit_group=""
+    if [[ "$1" == "--group" ]]; then
+        if [[ -z "$2" ]]; then
+            error "Missing group name after --group"
+        fi
+        explicit_group="$2"
+        shift 2
+    fi
+
     if [[ $# -eq 0 ]]; then
         error "No path to add."
     fi
@@ -95,32 +118,39 @@ cmd_add() {
             continue
         fi
 
-        echo "Select a group for '$resolved':"
-        local groups=("$PATH_DIR"/*(N))
-        local group_names=()
-        for g in "${groups[@]}"; do
-            [[ -f "$g" ]] && group_names+=("${g:t}")
-        done
-        group_names+=("Create new group")
-
-        menu "${group_names[@]}"
-        local idx=$(($? + 1))
-        echo ""
-
         local group
-        if [[ $idx -eq ${#group_names[@]} ]]; then
-            # Create new group
-            printf "Group name: "
-            read -r new_name
-            if [[ -z "$new_name" ]]; then
-                echo "${RED}Error:${NC} Group name cannot be empty"
-                continue
+        if [[ -n "$explicit_group" ]]; then
+            group="$PATH_DIR/$explicit_group"
+            if [[ ! -f "$group" ]]; then
+                touch "$group"
+                echo "${GREEN}Created group '$explicit_group'${NC}"
             fi
-            group="$PATH_DIR/$new_name"
-            touch "$group"
-            echo "${GREEN}Created group '$new_name'${NC}"
         else
-            group="${groups[$idx]}"
+            echo "Select a group for '$resolved':"
+            local groups=("$PATH_DIR"/*(N))
+            local group_names=()
+            for g in "${groups[@]}"; do
+                [[ -f "$g" ]] && group_names+=("${g:t}")
+            done
+            group_names+=("Create new group")
+
+            menu "${group_names[@]}"
+            local idx=$(($? + 1))
+            echo ""
+
+            if [[ $idx -eq ${#group_names[@]} ]]; then
+                printf "Group name: "
+                read -r new_name
+                if [[ -z "$new_name" ]]; then
+                    echo "${RED}Error:${NC} Group name cannot be empty"
+                    continue
+                fi
+                group="$PATH_DIR/$new_name"
+                touch "$group"
+                echo "${GREEN}Created group '$new_name'${NC}"
+            else
+                group="${groups[$idx]}"
+            fi
         fi
 
         if /usr/bin/grep -Fxq "$resolved" "$group" 2>/dev/null; then
@@ -333,6 +363,9 @@ case "${1:-}" in
     find)
         shift
         cmd_find "$@"
+        ;;
+    groups)
+        cmd_groups
         ;;
     dir)
         cmd_dir
