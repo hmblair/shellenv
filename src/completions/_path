@@ -8,6 +8,7 @@ _path() {
         'remove:Remove a path from a group'
         'clean:Remove nonexistent paths from groups'
         'list:Show all paths in current PATH'
+        'find:Find executables matching pattern'
         'groups:List available groups'
         'dir:Show path config directory'
         'help:Show usage'

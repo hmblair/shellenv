@@ -8,6 +8,7 @@ _envs() {
         'remove:Remove a variable'
         'clean:Remove variables not set in current env'
         'list:Show all managed variables'
+        'find:Find variables matching pattern'
         'groups:List available groups'
         'dir:Show config directory'
         'help:Show usage'
